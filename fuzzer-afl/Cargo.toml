@@ -4,5 +4,5 @@ version = "0.1.0"
 authors = ["The rust-fuzz Project Developers"]
 
 [dependencies]
-fuzz-targets-common = {path = "../common"}
-afl = "0.8"
+fuzz-targets-common = {path = "../targets"}
+afl = "0.10"

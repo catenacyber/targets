@@ -1,8 +1,16 @@
 [package]
 name = "fuzz-targets-libfuzzer"
-version = "0.1.0"
-authors = ["The rust-fuzz Project Developers"]
+version = "0.0.0"
+publish = false
+edition = "2018"
+
+[package.metadata]
+cargo-fuzz = true
 
 [dependencies]
-fuzz-targets-common = {path = "../common"}
-libfuzzer-sys = {git = "https://github.com/rust-fuzz/libfuzzer.git"}
+libfuzzer-sys = "0.4"
+fuzz-targets-common = {path = "../targets"}
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]

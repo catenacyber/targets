@@ -11,6 +11,7 @@ Here are some examples:
 - `cargo run list-targets` gives you a list of all fuzz targets
 - `cargo run target pulldown_cmark_read` runs the `pulldown_cmark_read` target with the default fuzzer
 - `cargo run target pulldown_cmark_read --fuzzer libfuzzer` runs the `pulldown_cmark_read` target with `libfuzzer`
+- `cargo run build pulldown_cmark_read --fuzzer libfuzzer` builds the `pulldown_cmark_read` target with `libfuzzer`
 - `cargo run continuously` runs all targets (you can overwrite timeout per target and change the fuzzer)
 
 For a complete list of available options, run `cargo run -- help`.

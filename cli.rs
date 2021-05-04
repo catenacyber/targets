@@ -62,6 +62,22 @@ enum Cli {
         )]
         fuzzer: Fuzzer,
     },
+    /// Build one target with specific fuzzer
+    #[structopt(name = "build")]
+    Build {
+        /// Which target to run
+        target: String,
+        /// Which fuzzer to run
+        #[structopt(
+            long = "fuzzer",
+            default_value = "Libfuzzer",
+            raw(
+                possible_values = "&Fuzzer::variants()",
+                case_insensitive = "true"
+            )
+        )]
+        fuzzer: Fuzzer,
+    },
     /// List all available targets
     #[structopt(name = "list-targets")]
     ListTargets,
@@ -106,6 +122,27 @@ fn run() -> Result<(), Error> {
                 Afl => run_afl(&target, None)?,
                 Honggfuzz => run_honggfuzz(&target, None)?,
                 Libfuzzer => run_libfuzzer(&target, None)?,
+            }
+        }
+        Build { target, fuzzer } => {
+            let targets = get_targets()?;
+            if targets.iter().find(|x| *x == &target).is_none() {
+                bail!(
+                    "Don't know target `{}`. {}",
+                    target,
+                    if let Some(alt) = did_you_mean(&target, &targets) {
+                        format!("Did you mean `{}`?", alt)
+                    } else {
+                        "".into()
+                    }
+                );
+            }
+
+            use Fuzzer::*;
+            match fuzzer {
+                Afl => build_afl(&target)?,
+                Honggfuzz => build_honggfuzz(&target)?,
+                Libfuzzer => build_libfuzzer(&target)?,
             }
         }
         Continuous {
@@ -156,17 +193,17 @@ fn run() -> Result<(), Error> {
     Ok(())
 }
 
-fn common_dir() -> Result<PathBuf, Error> {
+fn targets_dir() -> Result<PathBuf, Error> {
     let p = env::var("CARGO_MANIFEST_DIR")
         .map(From::from)
         .or_else(|_| env::current_dir())?
-        .join("common");
+        .join("targets");
 
     Ok(p)
 }
 
 fn create_seed_dir(target: &str) -> Result<PathBuf, Error> {
-    let seed_dir = common_dir()?.join("seeds").join(&target);
+    let seed_dir = targets_dir()?.join("seeds").join(&target);
     fs::create_dir_all(&seed_dir).context(format!("unable to create seed dir for {}", target))?;
     Ok(seed_dir)
 }
@@ -182,7 +219,7 @@ fn create_corpus_dir(base: &Path, target: &str) -> Result<PathBuf, Error> {
 }
 
 fn get_targets() -> Result<Vec<String>, Error> {
-    let source = common_dir()?.join("src/lib.rs");
+    let source = targets_dir()?.join("src/lib.rs");
     let targets_rs = fs::read_to_string(&source).context(format!("unable to read {:?}", source))?;
     let match_fuzz_fs = Regex::new(r"pub fn fuzz_(\w+)\(")?;
     let target_names = match_fuzz_fs
@@ -210,6 +247,28 @@ fn run_cargo_update() -> Result<(), Error> {
 #[derive(Fail, Debug)]
 #[fail(display = "Fuzzer quit")]
 pub struct FuzzerQuit;
+
+fn build_honggfuzz(target: &str) -> Result<(), Error> {
+    let fuzzer = Fuzzer::Honggfuzz;
+    write_fuzzer_target(fuzzer, target)?;
+    let dir = fuzzer.dir()?;
+
+    let fuzzer_bin = Command::new("cargo")
+        .args(&["hfuzz", "build", "--target-dir", "../target"])
+        .current_dir(&dir)
+        .spawn()
+        .context(format!("error starting {:?} to run {}", fuzzer, target))?
+        .wait()
+        .context(format!(
+            "error while waiting for {:?} running {}",
+            fuzzer, target
+        ))?;
+
+    if !fuzzer_bin.success() {
+        Err(FuzzerQuit)?;
+    }
+    Ok(())
+}
 
 fn run_honggfuzz(target: &str, timeout: Option<i32>) -> Result<(), Error> {
     let fuzzer = Fuzzer::Honggfuzz;
@@ -248,6 +307,26 @@ fn run_honggfuzz(target: &str, timeout: Option<i32>) -> Result<(), Error> {
     if !fuzzer_bin.success() {
         Err(FuzzerQuit)?;
     }
+    Ok(())
+}
+
+fn build_afl(target: &str) -> Result<(), Error> {
+    let fuzzer = Fuzzer::Afl;
+    write_fuzzer_target(fuzzer, target)?;
+    let dir = fuzzer.dir()?;
+
+    let build_cmd = Command::new("cargo")
+        .args(&["afl", "build", "--target", "x86_64-unknown-linux-gnu", "--release", "--bin", target])
+        .current_dir(&dir)
+        .spawn()
+        .context(format!("error starting build for {:?} of {}", fuzzer, target))?
+        .wait()
+        .context(format!("error while waiting for build for {:?} of {}", fuzzer, target))?;
+
+    if !build_cmd.success() {
+        Err(FuzzerQuit)?;
+    }
+
     Ok(())
 }
 
@@ -361,6 +440,31 @@ fn run_libfuzzer(target: &str, timeout: Option<i32>) -> Result<(), Error> {
         .arg(&seed_dir)
         .env("RUSTFLAGS", &rust_flags)
         .env("ASAN_OPTIONS", &asan_options)
+        .current_dir(&dir)
+        .spawn()
+        .context(format!("error starting {:?} to run {}", fuzzer, target))?
+        .wait()
+        .context(format!(
+            "error while waiting for {:?} running {}",
+            fuzzer, target
+        ))?;
+
+    if !fuzzer_bin.success() {
+        Err(FuzzerQuit)?;
+    }
+    Ok(())
+}
+
+fn build_libfuzzer(target: &str) -> Result<(), Error> {
+    let fuzzer = Fuzzer::Libfuzzer;
+    write_fuzzer_target(fuzzer, target)?;
+    let dir = fuzzer.dir()?;
+
+    let mut asan_options = env::var("ASAN_OPTIONS").unwrap_or_default();
+    asan_options.push_str(" detect_odr_violation=0 ");
+
+    let fuzzer_bin = Command::new("cargo")
+        .args(&["fuzz", "build", "-O", "--target-dir", "../target"])
         .current_dir(&dir)
         .spawn()
         .context(format!("error starting {:?} to run {}", fuzzer, target))?
